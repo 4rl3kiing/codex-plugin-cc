@@ -22,6 +22,11 @@ export function safeReadFile(filePath) {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
 }
 
+export function fenceFor(text) {
+  const longestRun = Math.max(2, ...(String(text).match(/`+/g) ?? []).map((run) => run.length));
+  return "`".repeat(longestRun + 1);
+}
+
 export function isProbablyText(buffer) {
   const sample = buffer.subarray(0, Math.min(buffer.length, 4096));
   for (const value of sample) {
@@ -36,5 +41,12 @@ export function readStdinIfPiped() {
   if (process.stdin.isTTY) {
     return "";
   }
-  return fs.readFileSync(0, "utf8");
+  try {
+    return fs.readFileSync(0, "utf8");
+  } catch (error) {
+    if (error?.code === "EAGAIN" || error?.code === "EOF") {
+      return "";
+    }
+    throw error;
+  }
 }

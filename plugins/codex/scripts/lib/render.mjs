@@ -1,3 +1,10 @@
+import { fenceFor } from "./fs.mjs";
+
+function codeBlock(text) {
+  const fence = fenceFor(text);
+  return [`${fence}text`, text, fence];
+}
+
 function severityRank(severity) {
   switch (severity) {
     case "critical":
@@ -219,7 +226,7 @@ export function renderReviewResult(parsedResult, meta) {
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", "```text", parsedResult.rawOutput, "```");
+      lines.push("", "Raw final message:", "", ...codeBlock(parsedResult.rawOutput));
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
@@ -239,7 +246,7 @@ export function renderReviewResult(parsedResult, meta) {
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", "```text", parsedResult.rawOutput, "```");
+      lines.push("", "Raw final message:", "", ...codeBlock(parsedResult.rawOutput));
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
@@ -304,7 +311,7 @@ export function renderNativeReviewResult(result, meta) {
   }
 
   if (stderr) {
-    lines.push("", "stderr:", "", "```text", stderr, "```");
+    lines.push("", "stderr:", "", ...codeBlock(stderr));
   }
 
   appendReasoningSection(lines, meta.reasoningSummary);

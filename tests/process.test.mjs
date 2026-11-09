@@ -53,3 +53,10 @@ test("terminateProcessTree treats missing Windows processes as already stopped",
   assert.equal(outcome.result.status, 128);
   assert.match(outcome.result.stdout, /not found/i);
 });
+
+test("runCommand reports a signal-terminated child as a failure", async () => {
+  const { runCommand, runCommandChecked } = await import("../plugins/codex/scripts/lib/process.mjs");
+  const args = ["-e", "process.kill(process.pid, 'SIGTERM')"];
+  assert.notEqual(runCommand(process.execPath, args).status, 0);
+  assert.throws(() => runCommandChecked(process.execPath, args), /signal=SIGTERM/);
+});

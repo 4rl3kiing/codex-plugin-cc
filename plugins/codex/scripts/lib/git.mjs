@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { isProbablyText } from "./fs.mjs";
+import { fenceFor, isProbablyText } from "./fs.mjs";
 import { formatCommandFailure, runCommand, runCommandChecked } from "./process.mjs";
 
 const MAX_UNTRACKED_BYTES = 24 * 1024;
@@ -15,6 +15,10 @@ function git(cwd, args, options = {}) {
 
 function gitChecked(cwd, args, options = {}) {
   return runCommandChecked("git", args, { cwd, ...options, shell: false });
+}
+
+function splitNul(output) {
+  return output.split("\0").filter(Boolean);
 }
 
 function listUniqueFiles(...groups) {
@@ -120,9 +124,9 @@ export function getCurrentBranch(cwd) {
 }
 
 export function getWorkingTreeState(cwd) {
-  const staged = gitChecked(cwd, ["diff", "--cached", "--name-only"]).stdout.trim().split("\n").filter(Boolean);
-  const unstaged = gitChecked(cwd, ["diff", "--name-only"]).stdout.trim().split("\n").filter(Boolean);
-  const untracked = gitChecked(cwd, ["ls-files", "--others", "--exclude-standard"]).stdout.trim().split("\n").filter(Boolean);
+  const staged = splitNul(gitChecked(cwd, ["diff", "--cached", "--name-only", "-z"]).stdout);
+  const unstaged = splitNul(gitChecked(cwd, ["diff", "--name-only", "-z"]).stdout);
+  const untracked = splitNul(gitChecked(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]).stdout);
 
   return {
     staged,
@@ -198,9 +202,12 @@ function formatUntrackedFile(cwd, relativePath) {
   const absolutePath = path.join(cwd, relativePath);
   let stat;
   try {
-    stat = fs.statSync(absolutePath);
+    stat = fs.lstatSync(absolutePath);
   } catch {
     return `### ${relativePath}\n(skipped: broken symlink or unreadable file)`;
+  }
+  if (stat.isSymbolicLink()) {
+    return `### ${relativePath}\n(skipped: symbolic link)`;
   }
   if (stat.isDirectory()) {
     return `### ${relativePath}\n(skipped: directory)`;
@@ -219,7 +226,9 @@ function formatUntrackedFile(cwd, relativePath) {
     return `### ${relativePath}\n(skipped: binary file)`;
   }
 
-  return [`### ${relativePath}`, "```", buffer.toString("utf8").trimEnd(), "```"].join("\n");
+  const content = buffer.toString("utf8").trimEnd();
+  const fence = fenceFor(content);
+  return [`### ${relativePath}`, fence, content, fence].join("\n");
 }
 
 function collectWorkingTreeContext(cwd, state, options = {}) {
@@ -263,7 +272,7 @@ function collectBranchContext(cwd, baseRef, options = {}) {
   const includeDiff = options.includeDiff !== false;
   const comparison = options.comparison ?? buildBranchComparison(cwd, baseRef);
   const currentBranch = getCurrentBranch(cwd);
-  const changedFiles = gitChecked(cwd, ["diff", "--name-only", comparison.commitRange]).stdout.trim().split("\n").filter(Boolean);
+  const changedFiles = splitNul(gitChecked(cwd, ["diff", "--name-only", "-z", comparison.commitRange]).stdout);
   const logOutput = gitChecked(cwd, ["log", "--oneline", "--decorate", comparison.commitRange]).stdout.trim();
   const diffStat = gitChecked(cwd, ["diff", "--stat", comparison.commitRange]).stdout.trim();
 
@@ -323,7 +332,7 @@ export function collectReviewContext(cwd, target, options = {}) {
     details = collectWorkingTreeContext(repoRoot, state, { includeDiff });
   } else {
     const comparison = buildBranchComparison(repoRoot, target.baseRef);
-    const fileCount = gitChecked(repoRoot, ["diff", "--name-only", comparison.commitRange]).stdout.trim().split("\n").filter(Boolean).length;
+    const fileCount = splitNul(gitChecked(repoRoot, ["diff", "--name-only", "-z", comparison.commitRange]).stdout).length;
     diffBytes = measureGitOutputBytes(
       repoRoot,
       ["diff", "--binary", "--no-ext-diff", "--submodule=diff", comparison.commitRange],

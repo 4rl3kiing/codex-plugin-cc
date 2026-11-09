@@ -198,6 +198,10 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
     this.proc.stdout.setEncoding("utf8");
     this.proc.stderr.setEncoding("utf8");
 
+    this.proc.stdin.on("error", (error) => {
+      this.handleExit(error);
+    });
+
     this.proc.stderr.on("data", (chunk) => {
       this.stderr += chunk;
     });

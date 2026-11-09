@@ -603,7 +603,13 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
       completeTurn(state, response.turn);
     }
 
-    return await state.completion;
+    const exited = client.exitPromise?.then(() => {
+      if (state.completed) {
+        return state;
+      }
+      throw client.exitError ?? new Error("codex app-server connection closed before the turn completed.");
+    });
+    return await Promise.race(exited ? [state.completion, exited] : [state.completion]);
   } finally {
     clearCompletionTimer(state);
     client.setNotificationHandler(previousHandler ?? null);
@@ -956,6 +962,8 @@ export async function getCodexAuthStatus(cwd, options = {}) {
     }
   }
 }
+
+export { captureTurn };
 
 export async function interruptAppServerTurn(cwd, { threadId, turnId }) {
   if (!threadId || !turnId) {

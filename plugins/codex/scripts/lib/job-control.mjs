@@ -1,7 +1,7 @@
 import fs from "node:fs";
 
 import { getSessionRuntimeStatus } from "./codex.mjs";
-import { getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
+import { getConfig, listJobs, readJobFile, resolveJobFile, upsertJob, writeJobFile } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
@@ -210,8 +210,48 @@ function matchJobReference(jobs, reference, predicate = () => true) {
   throw new Error(`No job found for "${reference}". Run /codex:status to list known jobs.`);
 }
 
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+/**
+ * Marks queued/running jobs whose worker process no longer exists as failed, so a crashed
+ * or SIGKILLed worker cannot leave a job "running" forever.
+ */
+export function reconcileOrphanedJobs(workspaceRoot, options = {}) {
+  const aliveImpl = options.isProcessAlive ?? isProcessAlive;
+  let changed = false;
+  for (const job of listJobs(workspaceRoot)) {
+    const active = job.status === "queued" || job.status === "running";
+    if (!active || !Number.isInteger(job.pid) || job.pid <= 0 || aliveImpl(job.pid)) {
+      continue;
+    }
+    const patch = {
+      id: job.id,
+      status: "failed",
+      phase: "failed",
+      pid: null,
+      errorMessage: "The Codex worker process exited unexpectedly.",
+      completedAt: new Date().toISOString()
+    };
+    const stored = readStoredJob(workspaceRoot, job.id);
+    if (stored) {
+      writeJobFile(workspaceRoot, job.id, { ...stored, ...patch });
+    }
+    upsertJob(workspaceRoot, patch);
+    changed = true;
+  }
+  return changed;
+}
+
 export function buildStatusSnapshot(cwd, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reconcileOrphanedJobs(workspaceRoot, options);
   const config = getConfig(workspaceRoot);
   const jobs = sortJobsNewestFirst(filterJobsForCurrentSession(listJobs(workspaceRoot), options));
   const maxJobs = options.maxJobs ?? DEFAULT_MAX_STATUS_JOBS;
@@ -241,6 +281,7 @@ export function buildStatusSnapshot(cwd, options = {}) {
 
 export function buildSingleJobSnapshot(cwd, reference, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reconcileOrphanedJobs(workspaceRoot, options);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const selected = matchJobReference(jobs, reference);
   if (!selected) {
@@ -280,6 +321,7 @@ export function resolveResultJob(cwd, reference) {
 
 export function resolveCancelableJob(cwd, reference, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reconcileOrphanedJobs(workspaceRoot, options);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const activeJobs = jobs.filter((job) => job.status === "queued" || job.status === "running");
 
