@@ -145,7 +145,7 @@ test("collectReviewContext skips broken untracked symlinks instead of crashing",
 
   assert.equal(target.mode, "working-tree");
   assert.match(context.content, /### broken-link/);
-  assert.match(context.content, /skipped: broken symlink or unreadable file/i);
+  assert.match(context.content, /skipped: symbolic link/i);
 });
 
 test("collectReviewContext falls back to lightweight context for larger adversarial reviews", () => {
@@ -209,4 +209,34 @@ test("collectReviewContext keeps untracked file content in lightweight working t
   assert.doesNotMatch(context.content, /TRACKED_MARKER_[AB]/);
   assert.match(context.content, /## Untracked Files/);
   assert.match(context.content, /UNTRACKED_RISK_MARKER/);
+});
+
+test("collectReviewContext does not inline the contents of untracked symlinks", () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  fs.writeFileSync(path.join(cwd, "app.js"), "console.log('v1');\n");
+  run("git", ["add", "app.js"], { cwd });
+  run("git", ["commit", "-m", "init"], { cwd });
+  const outside = path.join(makeTempDir(), "secret.txt");
+  fs.writeFileSync(outside, "TOP-SECRET-VALUE\n");
+  fs.symlinkSync(outside, path.join(cwd, "leak-link"));
+
+  const context = collectReviewContext(cwd, resolveReviewTarget(cwd, {}));
+
+  assert.doesNotMatch(context.content, /TOP-SECRET-VALUE/);
+  assert.match(context.content, /### leak-link\n\(skipped: symbolic link\)/);
+});
+
+test("working tree state keeps non-ASCII file names unquoted", () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  fs.writeFileSync(path.join(cwd, "app.js"), "console.log('v1');\n");
+  run("git", ["add", "app.js"], { cwd });
+  run("git", ["commit", "-m", "init"], { cwd });
+  fs.writeFileSync(path.join(cwd, "ñandú café.txt"), "hola\n");
+
+  const context = collectReviewContext(cwd, resolveReviewTarget(cwd, {}));
+
+  assert.deepEqual(context.changedFiles, ["ñandú café.txt"]);
+  assert.match(context.content, /### ñandú café\.txt\n```\nhola\n```/);
 });

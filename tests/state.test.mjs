@@ -103,3 +103,44 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
       .sort()
   );
 });
+
+test("reconcileOrphanedJobs fails running jobs whose worker is gone and keeps live ones", async () => {
+  const { reconcileOrphanedJobs, readStoredJob } = await import("../plugins/codex/scripts/lib/job-control.mjs");
+  const { upsertJob, listJobs, writeJobFile } = await import("../plugins/codex/scripts/lib/state.mjs");
+  const workspace = makeTempDir();
+  const previous = process.env.CLAUDE_PLUGIN_DATA;
+  process.env.CLAUDE_PLUGIN_DATA = makeTempDir();
+  try {
+    for (const [id, pid] of [["dead", 111], ["live", 222]]) {
+      const job = { id, status: "running", pid, workspaceRoot: workspace };
+      writeJobFile(workspace, id, job);
+      upsertJob(workspace, job);
+    }
+
+    assert.equal(reconcileOrphanedJobs(workspace, { isProcessAlive: (pid) => pid === 222 }), true);
+
+    const byId = Object.fromEntries(listJobs(workspace).map((job) => [job.id, job]));
+    assert.equal(byId.dead.status, "failed");
+    assert.equal(byId.dead.pid, null);
+    assert.equal(readStoredJob(workspace, "dead").status, "failed");
+    assert.equal(byId.live.status, "running");
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = previous;
+  }
+});
+
+test("saveState leaves no temp files behind and writes valid JSON", () => {
+  const workspace = makeTempDir();
+  const previous = process.env.CLAUDE_PLUGIN_DATA;
+  process.env.CLAUDE_PLUGIN_DATA = makeTempDir();
+  try {
+    saveState(workspace, { jobs: [{ id: "a", updatedAt: "2026-01-01T00:00:00Z" }] });
+    const dir = path.dirname(resolveStateFile(workspace));
+    assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith(".tmp")), []);
+    assert.equal(JSON.parse(fs.readFileSync(resolveStateFile(workspace), "utf8")).jobs.length, 1);
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = previous;
+  }
+});
