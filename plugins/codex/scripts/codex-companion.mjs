@@ -685,17 +685,27 @@ function enqueueBackgroundTask(cwd, job, request) {
   const { logFile } = createTrackedProgress(job);
   appendLogLine(logFile, "Queued for background execution.");
 
-  const child = spawnDetachedTaskWorker(cwd, job.id);
   const queuedRecord = {
     ...job,
     status: "queued",
     phase: "queued",
-    pid: child.pid ?? null,
+    pid: null,
     logFile,
     request
   };
+  // Persist the job before the worker exists so it can never start without a stored request,
+  // and so this write cannot overwrite the worker's own "running" record.
   writeJobFile(job.workspaceRoot, job.id, queuedRecord);
   upsertJob(job.workspaceRoot, queuedRecord);
+
+  const child = spawnDetachedTaskWorker(cwd, job.id);
+  if (child.pid) {
+    const stillQueued = readStoredJob(job.workspaceRoot, job.id)?.status === "queued";
+    if (stillQueued) {
+      writeJobFile(job.workspaceRoot, job.id, { ...queuedRecord, pid: child.pid });
+      upsertJob(job.workspaceRoot, { id: job.id, pid: child.pid });
+    }
+  }
 
   return {
     payload: {

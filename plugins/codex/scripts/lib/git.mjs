@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { isProbablyText } from "./fs.mjs";
+import { fenceFor, isProbablyText } from "./fs.mjs";
 import { formatCommandFailure, runCommand, runCommandChecked } from "./process.mjs";
 
 const MAX_UNTRACKED_BYTES = 24 * 1024;
@@ -226,7 +226,9 @@ function formatUntrackedFile(cwd, relativePath) {
     return `### ${relativePath}\n(skipped: binary file)`;
   }
 
-  return [`### ${relativePath}`, "```", buffer.toString("utf8").trimEnd(), "```"].join("\n");
+  const content = buffer.toString("utf8").trimEnd();
+  const fence = fenceFor(content);
+  return [`### ${relativePath}`, fence, content, fence].join("\n");
 }
 
 function collectWorkingTreeContext(cwd, state, options = {}) {
